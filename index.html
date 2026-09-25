@@ -1,11 +1,5 @@
 <!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#e985a6">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="apple-touch-icon" href="./icon-192.png">
 <title>Sweet Money ♡</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -96,8 +90,8 @@ input, select, button, textarea { pointer-events:auto !important; touch-action:m
 <section id="dash" class="view active"><div class="cards">
 <div class="card"><span class="emoji">💰</span><div class="label">Total pemasukan</div><div class="value pink" id="income"></div></div>
 <div class="card"><span class="emoji">🛍️</span><div class="label">Total pengeluaran</div><div class="value" id="expense"></div></div>
-<div class="card"><span class="emoji">🌷</span><div class="label">Pengeluaran wajib</div><div class="value" id="need"></div></div>
-<div class="card"><span class="emoji">☕</span><div class="label">Keinginan</div><div class="value" id="want"></div></div></div>
+<div class="card"><span class="emoji">🌷</span><div class="label">Sisa saldo bulan ini</div><div class="value" id="need"></div></div>
+<div class="card"><span class="emoji">💗</span><div class="label">Sisa tabungan saat ini</div><div class="value" id="want"></div></div></div>
 <div class="grid2"><div class="section"><div class="head"><h3>Cashflow bulanan ♡</h3><span class="muted">income vs spending</span></div><div class="chart"><canvas id="chart"></canvas></div></div>
 <div class="section"><div class="head"><h3>Goal tabungan ✨</h3><span class="muted" id="gname"></span></div><div style="font-size:30px;font-weight:700" id="gsaved"></div><div class="muted" id="gtarget" style="margin:5px 0 12px"></div><div class="progress"><div id="gbar"></div></div><div class="muted" id="gpct" style="margin-top:9px"></div></div></div>
 <div class="section" style="margin-top:16px"><div class="head"><h3>Pengeluaran terbaru</h3><button class="btn" onclick="openM()">+ Tambah</button></div><div style="overflow:auto"><table><thead><tr><th>Tanggal</th><th>Deskripsi</th><th>Kategori</th><th>Jenis</th><th>Jumlah</th></tr></thead><tbody id="recent"></tbody></table></div></div></section>
@@ -109,8 +103,8 @@ input, select, button, textarea { pointer-events:auto !important; touch-action:m
 </div></section>
 
 <section id="monthly" class="view"><div class="section">
-<div class="head"><div><h3>Sheet 2 · Saldo Bulanan ☾</h3><div class="muted">Pemasukan bisa diedit langsung. Pengeluaran dihitung dari Sheet 1.</div></div><button class="btn primary" onclick="addMonth()">+ Tambah bulan</button></div>
-<div style="overflow:auto"><table><thead><tr><th>Bulan</th><th>Pemasukan</th><th>Wajib</th><th>Keinginan</th><th>Total</th><th>Sisa</th><th>Saldo berjalan</th><th>Aksi</th></tr></thead><tbody id="monthBody"></tbody></table></div>
+<div class="head"><div><h3>Sheet 2 · Saldo Bulanan ☾</h3><div class="muted">Pemasukan dihitung per siklus tanggal 26 sampai 25 bulan berikutnya. Pengeluaran mengikuti siklus yang sama.</div></div><button class="btn primary" onclick="addMonth()">+ Tambah bulan</button></div>
+<div style="overflow:auto"><table><thead><tr><th>Siklus (26–25)</th><th>Pemasukan</th><th>Wajib</th><th>Keinginan</th><th>Total</th><th>Sisa</th><th>Saldo berjalan</th><th>Aksi</th></tr></thead><tbody id="monthBody"></tbody></table></div>
 </div></section>
 
 <section id="save" class="view">
@@ -162,31 +156,77 @@ function setConnectionStatus(online) { const el=document.getElementById('sheetSt
 function postToGoogle(action,data) { try { fetch(GOOGLE_SCRIPT_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action:action,data:data})}); sheetOnline=true; setConnectionStatus(true); clearTimeout(syncTimer); syncTimer=setTimeout(loadFromGoogleSheets,1200); } catch(error) { sheetOnline=false; setConnectionStatus(false); } }
 
 function save(){localStorage.setItem(K,JSON.stringify(d))}
-function totals(){let key=periodKey(),ms=d.monthly.filter(x=>key==='all'||x.month.slice(0,7)===key),inc=ms.reduce((a,x)=>a+x.income,0),n=0,w=0;d.daily.filter(x=>matchesPeriod(x.date)).forEach(x=>x.type==='Wajib'?n+=x.amount:w+=x.amount);return [inc,n,w,n+w]}
+function cycleStartForDate(date){
+  const dte=new Date(date);
+  if(isNaN(dte)) return '';
+  const y=dte.getFullYear(), m=dte.getMonth(), day=dte.getDate();
+  const start = day >= 26 ? new Date(y,m,26) : new Date(y,m-1,26);
+  return `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-26`;
+}
+function currentCycleStart(){
+  const now=new Date();
+  return cycleStartForDate(now);
+}
+function cycleKeyForMonth(monthValue){
+  const s=String(monthValue||'').slice(0,7);
+  return s ? s : '';
+}
 function periodKey(){
   const p=document.getElementById('period')?.value||'current';
-  const now=new Date(), y=now.getFullYear(), m=now.getMonth();
-  const cur=`${y}-${String(m+1).padStart(2,'0')}`;
-  const prevDate=new Date(y,m-1,1), prev=`${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-  return p==='previous'?prev:p==='all'?'all':cur;
+  if(p==='all') return 'all';
+  const start=new Date(currentCycleStart());
+  if(p==='previous') start.setMonth(start.getMonth()-1);
+  return `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}`;
 }
 function matchesPeriod(date){
   const p=periodKey(); if(p==='all') return true;
-  return String(date).slice(0,7)===p;
+  return cycleStartForDate(date).slice(0,7)===p;
+}
+function incomeForCycle(cycleKey){
+  return d.monthly.filter(x=>cycleKeyForMonth(x.month)===cycleKey).reduce((a,x)=>a+(Number(x.income)||0),0);
+}
+function cycleLabel(cycleKey){
+  if(!cycleKey) return '';
+  const [y,m]=cycleKey.split('-').map(Number);
+  const a=new Date(y,m-1,26), b=new Date(y,m,25);
+  return `${a.toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'})} – ${b.toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'})}`;
+}
+function totals(){
+  const key=periodKey();
+  let inc=0,n=0,w=0;
+  if(key==='all'){
+    inc=d.monthly.reduce((a,x)=>a+(Number(x.income)||0),0);
+    d.daily.forEach(x=>x.type==='Wajib'?n+=Number(x.amount)||0:w+=Number(x.amount)||0);
+  } else {
+    inc=incomeForCycle(key);
+    d.daily.filter(x=>matchesPeriod(x.date)).forEach(x=>x.type==='Wajib'?n+=Number(x.amount)||0:w+=Number(x.amount)||0);
+  }
+  return [inc,n,w,n+w];
+}
+function currentSavingsBalance(){
+  const deposited=(Number(d.startingSavings)||0)+(d.savings||[]).reduce((a,x)=>a+(Number(x.amount)||0),0);
+  const withdrawn=(d.withdrawals||[]).reduce((a,x)=>a+(Number(x.amount)||0),0);
+  return Math.max(deposited-withdrawn,0);
 }
 function calc(){
   let run=0;
   return d.monthly.map(m=>{
+    const key=cycleKeyForMonth(m.month);
     let n=0,w=0;
-    d.daily.forEach(x=>{if(x.date.slice(0,7)===m.month.slice(0,7)) x.type==='Wajib'?n+=x.amount:w+=x.amount});
-    let out=n+w,left=m.income-out; run+=left;
-    return {...m,n,w,out,left,run};
+    d.daily.forEach(x=>{if(cycleStartForDate(x.date).slice(0,7)===key) x.type==='Wajib'?n+=Number(x.amount)||0:w+=Number(x.amount)||0});
+    let out=n+w,left=(Number(m.income)||0)-out; run+=left;
+    return {...m,n,w,out,left,run,cycle:cycleLabel(key)};
   })
 }
 function render(){
   document.getElementById('today').textContent=new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long'});
   let [inc,n,w,out]=totals();
-  ['income','need','want','expense'].forEach((id,i)=>document.getElementById(id).textContent=rp([inc,n,w,out][i]));
+  const remaining=inc-out;
+  const savingsBalance=currentSavingsBalance();
+  document.getElementById('income').textContent=rp(inc);
+  document.getElementById('expense').textContent=rp(out);
+  document.getElementById('need').textContent=rp(remaining);
+  document.getElementById('want').textContent=rp(savingsBalance);
   const rows=d.daily.filter(x=>matchesPeriod(x.date)).slice(-6).reverse();
   document.getElementById('recent').innerHTML=rows.length?rows.map(x=>`<tr><td>${x.date}</td><td>${esc(x.description)}</td><td>${esc(x.category)}</td><td><span class="badge ${x.type.toLowerCase()}">${x.type}</span></td><td>${rp(x.amount)}</td></tr>`).join(''):`<tr><td colspan="5" class="empty">Belum ada pengeluaran ♡</td></tr>`;
   dailyView(); monthView(); saveView(); chartView()
@@ -213,7 +253,7 @@ function monthView(){
   let r=calc(), key=periodKey();
   if(key!=='all') r=r.filter(x=>x.month.slice(0,7)===key);
   document.getElementById('monthBody').innerHTML=r.length?r.map(x=>`<tr>
-    <td><input type="month" value="${x.month.slice(0,7)}" onchange="editMonthDate('${x.month}',this.value)"></td>
+    <td><input type="month" value="${x.month.slice(0,7)}" onchange="editMonthDate('${x.month}',this.value)"><div class="muted" style="font-size:10px;margin-top:4px">${x.cycle}</div></td>
     <td><input type="number" value="${x.income}" style="width:140px" onchange="editIncome('${x.month}',this.value)"></td>
     <td>${rp(x.n)}</td><td>${rp(x.w)}</td><td>${rp(x.out)}</td><td>${rp(x.left)}</td><td>${rp(x.run)}</td>
     <td><button class="btn ghost" onclick="deleteMonth('${x.month}')">hapus</button></td></tr>`).join(''):`<tr><td colspan="8" class="empty">Belum ada bulan ♡</td></tr>`
@@ -282,12 +322,4 @@ function toast(t){let x=document.getElementById('toast');x.textContent=t;x.style
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));document.getElementById(b.dataset.v).classList.add('active')});
 render();
 loadFromGoogleSheets();
-</script>
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('PWA service worker:', err));
-  });
-}
-</script>
-</body></html>
+</script></body></html>
